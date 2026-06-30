@@ -113,32 +113,38 @@ load_models_for_tier() {
         MODEL_NAMES=(
           "Qwen2.5 Coder 72B  (Rank 1)"
           "Llama 3.3 70B      (Rank 2)"
+          "Gemma 3 27B        (Rank 3)"
         )
         MODEL_TAGS=(
           "qwen2.5-coder:72b"
           "llama3.3:70b"
+          "gemma3:27b"
         )
         MODEL_BEST_FOR=(
           "Coding · Code Review · Debugging · 72B coding specialist"
           "Coding · General · Instructions · 70B best overall"
+          "Coding · Chat · Fast · Google quality · Low VRAM usage"
         )
-        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB")
-        MODEL_LICENSE=("Apache 2.0" "Llama")
+        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB" "27B dense  ~16 GB")
+        MODEL_LICENSE=("Apache 2.0" "Llama" "Gemma")
       else
         MODEL_NAMES=(
           "DeepSeek R1 70B  (Rank 1)"
           "Qwen3 32B        (Rank 2)"
+          "Gemma 3 27B      (Rank 3)"
         )
         MODEL_TAGS=(
           "deepseek-r1:70b"
           "qwen3:32b"
+          "gemma3:27b"
         )
         MODEL_BEST_FOR=(
           "Reasoning · Math · Science · 70B distill"
           "Reasoning · Logic · Coding · Fast inference"
+          "Reasoning · General · Fast · Google quality · Low VRAM usage"
         )
-        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB")
-        MODEL_LICENSE=("MIT" "Apache 2.0")
+        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB" "27B dense  ~16 GB")
+        MODEL_LICENSE=("MIT" "Apache 2.0" "Gemma")
       fi
       ;;
 
@@ -147,32 +153,38 @@ load_models_for_tier() {
         MODEL_NAMES=(
           "Qwen2.5 Coder 72B  (Rank 1)"
           "Llama 3.3 70B      (Rank 2)"
+          "Gemma 3 27B        (Rank 3)"
         )
         MODEL_TAGS=(
           "qwen2.5-coder:72b"
           "llama3.3:70b"
+          "gemma3:27b"
         )
         MODEL_BEST_FOR=(
           "Coding · Code Review · Debugging · 72B coding specialist"
           "Coding · General · Instructions · 70B best overall"
+          "Coding · Chat · Fast · Google quality · Low VRAM usage"
         )
-        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB")
-        MODEL_LICENSE=("Apache 2.0" "Llama")
+        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB" "27B dense  ~16 GB")
+        MODEL_LICENSE=("Apache 2.0" "Llama" "Gemma")
       else
         MODEL_NAMES=(
           "DeepSeek R1 70B  (Rank 1)"
           "Qwen3 32B        (Rank 2)"
+          "Gemma 3 27B      (Rank 3)"
         )
         MODEL_TAGS=(
           "deepseek-r1:70b"
           "qwen3:32b"
+          "gemma3:27b"
         )
         MODEL_BEST_FOR=(
           "Reasoning · Math · Science · 70B distill"
           "Reasoning · Logic · Coding · Fast inference"
+          "Reasoning · General · Fast · Google quality · Low VRAM usage"
         )
-        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB")
-        MODEL_LICENSE=("MIT" "Apache 2.0")
+        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB" "27B dense  ~16 GB")
+        MODEL_LICENSE=("MIT" "Apache 2.0" "Gemma")
       fi
       ;;
 
