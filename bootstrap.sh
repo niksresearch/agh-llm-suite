@@ -50,7 +50,15 @@ main() {
   DATA_DIR="/data/${POD_NAME}"
   LOG_DIR="/var/log/${POD_NAME}"
   mkdir -p "$LOG_DIR"
-  echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT}"
+
+  # Model storage — prefer large ephemeral disk if present, fallback to /data
+  if [ -d "/ephemeral" ] && [ "$(df --output=avail /ephemeral 2>/dev/null | tail -1)" -gt 10485760 ]; then
+    OLLAMA_MODELS_DIR="/ephemeral/ollama/models"
+  else
+    OLLAMA_MODELS_DIR="/data/ollama/models"
+  fi
+  mkdir -p "$OLLAMA_MODELS_DIR"
+  echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT} Models=${OLLAMA_MODELS_DIR}"
 
   # ---- Step 2: Launch envPod ------------------------------------------------
   # Init pod first (idempotent — OK if already exists)
@@ -141,7 +149,10 @@ main() {
   [ -n "$STORED_OLLAMA" ] && kill "$STORED_OLLAMA" 2>/dev/null || true
   sleep 1
   nsenter -t "$POD_PID" -m -- bash -c "
-    nohup env OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
+    nohup env \
+      OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} \
+      OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
+      OLLAMA_MODELS=${OLLAMA_MODELS_DIR} \
       ollama serve > ${LOG_DIR}/ollama.log 2>&1 &
     echo \$! > /var/run/${POD_NAME}-ollama.pid
   "
