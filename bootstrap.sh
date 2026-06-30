@@ -57,7 +57,7 @@ main() {
     echo "Pod ${POD_NAME} already running — reusing."
     POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | head -1)
   else
-    envpod run --gpu "$POD_NAME" -- sleep infinity &
+    envpod run --root --background "$POD_NAME" -- sleep infinity
     POD_PID=""
     for i in $(seq 1 20); do
       POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | tail -1)
