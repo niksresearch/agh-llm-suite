@@ -73,10 +73,12 @@ fi
 # ---------------------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "Repo found — updating..."
+  git -C "$INSTALL_DIR" config core.fileMode false
   git -C "$INSTALL_DIR" fetch origin
   git -C "$INSTALL_DIR" reset --hard origin/main
 else
   git clone https://github.com/niksresearch/agh-llm-suite.git "$INSTALL_DIR"
+  git -C "$INSTALL_DIR" config core.fileMode false
 fi
 
 chmod +x "$INSTALL_DIR/startup.sh" \
