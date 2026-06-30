@@ -53,19 +53,34 @@ main() {
   echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT}"
 
   # ---- Step 2: Launch envPod ------------------------------------------------
-  if ps aux | grep -v grep | grep -q "${POD_NAME}"; then
-    echo "Pod ${POD_NAME} already running — reusing."
-    POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | head -1)
-  else
+  # Init pod first (idempotent — OK if already exists)
+  envpod init "$POD_NAME" || echo "Pod ${POD_NAME} already initialized — continuing."
+
+  # Reuse anchor process if PID file exists and process is alive
+  PID_FILE="/var/run/${POD_NAME}-pod.pid"
+  POD_PID=""
+
+  if [ -f "$PID_FILE" ]; then
+    STORED=$(cat "$PID_FILE" 2>/dev/null || true)
+    if [ -n "$STORED" ] && kill -0 "$STORED" 2>/dev/null; then
+      POD_PID="$STORED"
+      echo "Pod ${POD_NAME} already running (PID ${POD_PID}) — reusing."
+    fi
+  fi
+
+  if [ -z "$POD_PID" ]; then
+    echo "Starting pod anchor process..."
     envpod run --root --background "$POD_NAME" -- sleep infinity
-    POD_PID=""
     for i in $(seq 1 20); do
-      POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | tail -1)
+      POD_PID=$(ps aux | grep "[s]leep infinity" | grep -v grep | awk '{print $2}' | tail -1)
       [ -n "$POD_PID" ] && break
+      echo "Waiting for pod (${i}/20)..."
       sleep 3
     done
+    [ -n "$POD_PID" ] && echo "$POD_PID" > "$PID_FILE"
   fi
-  [[ -n "${POD_PID:-}" ]] || _fail "Could not find PID for pod ${POD_NAME}"
+
+  [[ -n "${POD_PID:-}" ]] || _fail "Could not get PID for pod ${POD_NAME}"
   echo "Pod PID: $POD_PID"
 
   # ---- Step 3: Install deps inside pod --------------------------------------
