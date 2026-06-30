@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Model catalog — sourced by startup.sh
 #
-# GPU tiers → categories → top models
-# Tags marked [VERIFY] need confirmation on HF/Ollama before first use.
+# All tags use Ollama native registry (ollama.com/library) — no HF auth redirects.
+# GPU tiers → categories → top models, ordered best-first.
 
 # ---------------------------------------------------------------------------
 # detect_gpu_tier
@@ -84,18 +84,18 @@ load_models_for_tier() {
 
     0) # ── 1× A100 40GB ──────────────────────────────────────────────────
       MODEL_NAMES=(
-        "Gemma 4 31B"
+        "Gemma 3 27B"
         "Qwen3 32B"
         "DeepSeek R1 32B"
         "Llama 3.3 70B"
-        "Mistral Small 3.1 22B"
+        "Phi-4 14B"
       )
       MODEL_TAGS=(
-        "hf.co/unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL"
-        "hf.co/unsloth/Qwen3-32B-GGUF:UD-Q4_K_XL"
-        "hf.co/unsloth/DeepSeek-R1-0528-Qwen3-32B-GGUF:UD-Q4_K_XL"
-        "hf.co/unsloth/Llama-3.3-70B-Instruct-GGUF:UD-Q4_K_XL"
-        "hf.co/unsloth/Mistral-Small-3.1-22B-Instruct-2503-GGUF:UD-Q4_K_XL"
+        "gemma3:27b"
+        "qwen3:32b"
+        "deepseek-r1:32b"
+        "llama3.3:70b"
+        "phi4"
       )
       MODEL_BEST_FOR=(
         "General · Chat · Summarization · Instructions"
@@ -104,127 +104,127 @@ load_models_for_tier() {
         "Best overall quality · Complex tasks (uses full VRAM)"
         "Fast responses · Balanced quality · Low latency"
       )
-      MODEL_SIZE=("~22 GB" "~22 GB" "~22 GB" "~40 GB" "~14 GB")
-      MODEL_LICENSE=("Gemma" "Apache 2.0" "MIT" "Llama" "Apache 2.0")
+      MODEL_SIZE=("~16 GB" "~20 GB" "~20 GB" "~40 GB" "~9 GB")
+      MODEL_LICENSE=("Gemma" "Apache 2.0" "MIT" "Llama" "MIT")
       ;;
 
     1) # ── 1× A100 80GB ──────────────────────────────────────────────────
       if [ "$category" = "Coding" ]; then
         MODEL_NAMES=(
-          "DeepSeek V4 Flash  (Rank 1)"
-          "Qwen3.5 122B A10B  (Rank 2)"
+          "Qwen2.5 Coder 72B  (Rank 1)"
+          "Llama 3.3 70B      (Rank 2)"
         )
         MODEL_TAGS=(
-          "hf.co/unsloth/DeepSeek-V4-Flash-GGUF:Q4_K_M"           # [VERIFY]
-          "hf.co/unsloth/Qwen3.5-122B-A10B-Instruct-GGUF:Q4_K_M"  # [VERIFY]
+          "qwen2.5-coder:72b"
+          "llama3.3:70b"
         )
         MODEL_BEST_FOR=(
-          "Coding · Fast inference · MoE 284B / 13B active"
-          "Coding · Logic · MoE 122B / 10B active"
+          "Coding · Code Review · Debugging · 72B coding specialist"
+          "Coding · General · Instructions · 70B best overall"
         )
-        MODEL_SIZE=("284B MoE  ~40–50 GB" "122B MoE  ~40 GB")
-        MODEL_LICENSE=("MIT" "Apache 2.0")
+        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB")
+        MODEL_LICENSE=("Apache 2.0" "Llama")
       else
         MODEL_NAMES=(
-          "DeepSeek R1 Distill Llama 70B  (Rank 1)"
-          "DeepSeek V3 heavy quant        (Rank 2)"
+          "DeepSeek R1 70B  (Rank 1)"
+          "Qwen3 32B        (Rank 2)"
         )
         MODEL_TAGS=(
-          "hf.co/unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF:Q4_K_M"
-          "hf.co/unsloth/DeepSeek-V3-GGUF:IQ2_XS"                  # [VERIFY quant]
+          "deepseek-r1:70b"
+          "qwen3:32b"
         )
         MODEL_BEST_FOR=(
-          "Reasoning · Math · Science · 70B dense"
-          "Reasoning · Complex tasks · MoE 671B / 37B active"
+          "Reasoning · Math · Science · 70B distill"
+          "Reasoning · Logic · Coding · Fast inference"
         )
-        MODEL_SIZE=("70B dense  ~40 GB" "671B MoE  ~70 GB heavy quant")
-        MODEL_LICENSE=("MIT / Llama" "MIT")
+        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB")
+        MODEL_LICENSE=("MIT" "Apache 2.0")
       fi
       ;;
 
-    2) # ── 1× H100 80GB ──────────────────────────────────────────────────
+    2) # ── 1× H100 80GB — same VRAM as A100 80GB, better throughput ─────
       if [ "$category" = "Coding" ]; then
         MODEL_NAMES=(
-          "DeepSeek V4 Flash  (Rank 1)"
-          "GPT-OSS 120B       (Rank 2)"
+          "Qwen2.5 Coder 72B  (Rank 1)"
+          "Llama 3.3 70B      (Rank 2)"
         )
         MODEL_TAGS=(
-          "hf.co/unsloth/DeepSeek-V4-Flash-GGUF:Q4_K_M"  # [VERIFY]
-          "hf.co/unsloth/GPT-OSS-120B-GGUF:Q4_K_M"       # [VERIFY]
+          "qwen2.5-coder:72b"
+          "llama3.3:70b"
         )
         MODEL_BEST_FOR=(
-          "Coding · Fast · MoE 284B / 13B active"
-          "Coding · General · 120B MoE"
+          "Coding · Code Review · Debugging · 72B coding specialist"
+          "Coding · General · Instructions · 70B best overall"
         )
-        MODEL_SIZE=("284B MoE  ~40–50 GB" "120B MoE  ~60 GB")
-        MODEL_LICENSE=("MIT" "Apache 2.0")
+        MODEL_SIZE=("72B dense  ~41 GB" "70B dense  ~40 GB")
+        MODEL_LICENSE=("Apache 2.0" "Llama")
       else
         MODEL_NAMES=(
-          "Qwen3.5 122B A10B  (Rank 1)"
-          "GPT-OSS 120B       (Rank 2)"
+          "DeepSeek R1 70B  (Rank 1)"
+          "Qwen3 32B        (Rank 2)"
         )
         MODEL_TAGS=(
-          "hf.co/unsloth/Qwen3.5-122B-A10B-Instruct-GGUF:Q4_K_M"  # [VERIFY]
-          "hf.co/unsloth/GPT-OSS-120B-GGUF:Q4_K_M"                 # [VERIFY]
+          "deepseek-r1:70b"
+          "qwen3:32b"
         )
         MODEL_BEST_FOR=(
-          "Reasoning · Math · MoE 122B / 10B active"
-          "Reasoning · General · 120B MoE"
+          "Reasoning · Math · Science · 70B distill"
+          "Reasoning · Logic · Coding · Fast inference"
         )
-        MODEL_SIZE=("122B MoE  ~40 GB" "120B MoE  ~60 GB")
-        MODEL_LICENSE=("Apache 2.0" "Apache 2.0")
+        MODEL_SIZE=("70B dense  ~40 GB" "32B dense  ~20 GB")
+        MODEL_LICENSE=("MIT" "Apache 2.0")
       fi
       ;;
 
-    3) # ── 4× H100 (320 GB) ──────────────────────────────────────────────
+    3) # ── 4× H100 (320 GB) ─────────────────────────────────────────────
       MODEL_NAMES=(
-        "GLM-4.7   (Rank 1 — Coding + Reasoning)"
-        "Kimi K2.6 (Rank 2 — Coding + Reasoning)"
+        "Llama 3.1 405B  (Rank 1 — Coding + Reasoning)"
+        "DeepSeek R1 671B (Rank 2 — Reasoning)"
       )
       MODEL_TAGS=(
-        "hf.co/unsloth/GLM-4.7-GGUF:Q4_K_M"      # [VERIFY]
-        "hf.co/unsloth/Kimi-K2.6-GGUF:INT4"       # [VERIFY]
+        "llama3.1:405b"
+        "deepseek-r1:671b"
       )
       MODEL_BEST_FOR=(
-        "Coding · Reasoning · MoE 355B / 32B active"
-        "Coding · Reasoning · MoE 1T / 32B active"
+        "Best overall quality · Instructions · 405B dense"
+        "Reasoning · Math · Science · 671B distill Q4"
       )
-      MODEL_SIZE=("355B MoE  ~160 GB" "1T MoE  ~200 GB")
-      MODEL_LICENSE=("MIT" "Modified MIT")
+      MODEL_SIZE=("405B dense  ~230 GB" "671B dense  ~403 GB")
+      MODEL_LICENSE=("Llama" "MIT")
       ;;
 
-    4) # ── 8× H100 (640 GB) ──────────────────────────────────────────────
+    4) # ── 8× H100 (640 GB) ─────────────────────────────────────────────
       MODEL_NAMES=(
-        "GLM-5.1      (Rank 1 — Coding + Reasoning)"
-        "Kimi K2.5/K2.6 (Rank 2 — Coding + Reasoning)"
+        "DeepSeek R1 671B  (Rank 1 — Reasoning)"
+        "Llama 3.1 405B    (Rank 2 — Coding + General)"
       )
       MODEL_TAGS=(
-        "hf.co/unsloth/GLM-5.1-GGUF:Q4_K_M"      # [VERIFY]
-        "hf.co/unsloth/Kimi-K2.6-GGUF:INT4"       # [VERIFY]
+        "deepseek-r1:671b"
+        "llama3.1:405b"
       )
       MODEL_BEST_FOR=(
-        "Coding · Reasoning · MoE 754B / 40B active"
-        "Coding · Reasoning · MoE 1T / 32B active"
+        "Reasoning · Math · Science · 671B full Q4"
+        "Coding · General · Instructions · 405B dense"
       )
-      MODEL_SIZE=("754B MoE  ~300 GB" "1T MoE  ~400 GB")
-      MODEL_LICENSE=("MIT" "Modified MIT")
+      MODEL_SIZE=("671B dense  ~403 GB" "405B dense  ~230 GB")
+      MODEL_LICENSE=("MIT" "Llama")
       ;;
 
-    5) # ── 8× H200 (1,128 GB) ────────────────────────────────────────────
+    5) # ── 8× H200 (1,128 GB) ───────────────────────────────────────────
       MODEL_NAMES=(
-        "DeepSeek V4 Pro  (Rank 1 — Coding + Reasoning)"
-        "GLM-5.2          (Rank 2 — Coding + Reasoning)"
+        "DeepSeek R1 671B  (Rank 1 — Reasoning)"
+        "Llama 3.1 405B    (Rank 2 — Coding + General)"
       )
       MODEL_TAGS=(
-        "hf.co/unsloth/DeepSeek-V4-Pro-GGUF:Q4_K_M"  # [VERIFY]
-        "hf.co/unsloth/GLM-5.2-GGUF:FP8"             # [VERIFY]
+        "deepseek-r1:671b"
+        "llama3.1:405b"
       )
       MODEL_BEST_FOR=(
-        "Coding · Reasoning · MoE 1.6T / 49B active"
-        "Coding · Reasoning · MoE 744B / 40B active (FP8)"
+        "Reasoning · Math · Science · 671B full Q4 (run Q8 for best quality)"
+        "Coding · General · Instructions · 405B dense Q8"
       )
-      MODEL_SIZE=("1.6T MoE  ~500 GB" "744B MoE  ~744 GB")
-      MODEL_LICENSE=("MIT" "MIT")
+      MODEL_SIZE=("671B dense  ~403 GB Q4 / ~670 GB Q8" "405B dense  ~230 GB Q4 / ~430 GB Q8")
+      MODEL_LICENSE=("MIT" "Llama")
       ;;
 
   esac
