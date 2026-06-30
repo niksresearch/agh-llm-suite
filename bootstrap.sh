@@ -91,6 +91,16 @@ main() {
   [[ -n "${POD_PID:-}" ]] || _fail "Could not get PID for pod ${POD_NAME}"
   echo "Pod PID: $POD_PID"
 
+  # Bind /ephemeral into pod's mount namespace so Ollama can write large models there.
+  # /proc/1/root is the host root visible from inside any mount namespace.
+  if [ -d "/ephemeral" ]; then
+    nsenter -t "$POD_PID" -m -- bash -c "
+      mkdir -p /ephemeral
+      mountpoint -q /ephemeral 2>/dev/null || mount --bind /proc/1/root/ephemeral /ephemeral
+    " && echo "Bound /ephemeral into pod." \
+      || echo "WARNING: /ephemeral bind-mount failed — models may land on OS disk." >&2
+  fi
+
   # ---- Step 3: Install deps inside pod --------------------------------------
   echo "Installing common dependencies inside pod..."
   nsenter -t "$POD_PID" -m -- bash -c "
