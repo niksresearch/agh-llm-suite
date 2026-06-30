@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+keys.txt
+
+# Runtime data
+data/
+*.log
+
+# Internal docs + memory
+docs/
+*.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store
