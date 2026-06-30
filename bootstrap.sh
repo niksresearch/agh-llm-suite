@@ -172,8 +172,10 @@ main() {
 
   # ---- Step 10: Pull model --------------------------------------------------
   echo "Pulling model: ${MODEL_SHORT} (${MODEL_TAG}) ..."
+  # Remove any corrupt partial blobs before pulling (leftover from prior failed runs)
+  find "${OLLAMA_MODELS_DIR}/blobs" -name "*-partial" -delete 2>/dev/null || true
   nsenter -t "$POD_PID" -m -- bash -c "
-    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama pull '${MODEL_TAG}'
+    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} OLLAMA_MODELS=${OLLAMA_MODELS_DIR} ollama pull '${MODEL_TAG}'
   " || _fail "Model pull failed: ${MODEL_TAG}"
   echo "Model pulled successfully."
 
