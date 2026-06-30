@@ -54,7 +54,7 @@ main() {
 
   # ---- Step 2: Launch envPod ------------------------------------------------
   # Init pod first (idempotent — OK if already exists)
-  envpod init "$POD_NAME" || echo "Pod ${POD_NAME} already initialized — continuing."
+  echo "19" | envpod init "$POD_NAME" || echo "Pod ${POD_NAME} already initialized — continuing."
 
   # Reuse anchor process if PID file exists and process is alive
   PID_FILE="/var/run/${POD_NAME}-pod.pid"
