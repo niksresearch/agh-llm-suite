@@ -3,11 +3,27 @@ set -euo pipefail
 
 # AGH LLM Suite — Setup Script
 # Run this after SSH-ing into the GPU instance:
-#   curl -fsSL https://raw.githubusercontent.com/niksresearch/agh-llm-suite/main/startup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/niksresearch/agh-llm-suite/main/startup.sh | sudo bash
 # or if repo already cloned:
-#   bash /opt/agh-llm-suite/startup.sh
+#   sudo bash /opt/agh-llm-suite/startup.sh
 
 INSTALL_DIR="/opt/agh-llm-suite"
+
+# ---------------------------------------------------------------------------
+# Root check — everything needs root (apt, nsenter, envpod, /opt writes)
+# ---------------------------------------------------------------------------
+if [ "$(id -u)" -ne 0 ]; then
+  echo ""
+  echo "ERROR: This script must run as root."
+  echo ""
+  echo "Run with sudo:"
+  echo "  curl -fsSL https://raw.githubusercontent.com/niksresearch/agh-llm-suite/main/startup.sh | sudo bash"
+  echo ""
+  echo "Or if already cloned:"
+  echo "  sudo bash /opt/agh-llm-suite/startup.sh"
+  echo ""
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 0: Prerequisites (idempotent — safe to run multiple times)
