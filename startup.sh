@@ -67,12 +67,81 @@ chmod +x "$INSTALL_DIR/startup.sh" \
          "$INSTALL_DIR/bootstrap.sh"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Interactive — prompt for bundle + pod slot
+# Phase 2: Interactive — model → bundle → pod slot
 # ---------------------------------------------------------------------------
+
+# Load model catalog
+# shellcheck source=/dev/null
+source "$INSTALL_DIR/models/catalog.sh"
+
 echo ""
 echo "=============================================="
 echo " AGH LLM Suite — Setup"
 echo "=============================================="
+
+# ---- GPU auto-detect -------------------------------------------------------
+echo ""
+echo " Detecting GPU..."
+detect_gpu_tier
+TIER_IDX="$DETECTED_TIER_IDX"
+echo " Detected : ${DETECTED_GPU_LABEL}"
+echo " Tier     : ${GPU_TIER_NAMES[$TIER_IDX]}"
+
+# ---- Category selection (skip for A100 40GB — shows all models) -----------
+CATEGORY="All"
+if [ "$TIER_IDX" -ge 1 ] && [ "$TIER_IDX" -le 2 ]; then
+  echo ""
+  echo " Select model category:"
+  echo ""
+  echo "  [1] Coding      — code generation, debugging, logic"
+  echo "  [2] Reasoning   — math, science, step-by-step analysis"
+  echo ""
+  while true; do
+    read -rp " Enter category [1/2]: " CAT_CHOICE
+    case "$CAT_CHOICE" in
+      1) CATEGORY="Coding";    break ;;
+      2) CATEGORY="Reasoning"; break ;;
+      *) echo " Enter 1 or 2." ;;
+    esac
+  done
+  echo ""
+  echo " Category: ${CATEGORY}"
+fi
+
+# ---- Model selection -------------------------------------------------------
+# shellcheck disable=SC2034
+load_models_for_tier "$TIER_IDX" "$CATEGORY"
+
+echo ""
+echo " Select a Model:"
+echo ""
+MODEL_COUNT="${#MODEL_NAMES[@]}"
+for i in "${!MODEL_NAMES[@]}"; do
+  printf "  [%d] %-42s  %s\n" "$((i+1))" "${MODEL_NAMES[$i]}" "${MODEL_SIZE[$i]}"
+  printf "      Best for:  %s\n"          "${MODEL_BEST_FOR[$i]}"
+  printf "      License:   %s\n"          "${MODEL_LICENSE[$i]}"
+  echo ""
+done
+
+while true; do
+  read -rp " Enter model [1-${MODEL_COUNT}]: " MODEL_CHOICE
+  if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && \
+     [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "$MODEL_COUNT" ]; then
+    break
+  fi
+  echo " Invalid choice. Enter a number between 1 and ${MODEL_COUNT}."
+done
+
+MODEL_IDX=$((MODEL_CHOICE - 1))
+MODEL_TAG="${MODEL_TAGS[$MODEL_IDX]}"
+MODEL_SHORT="${MODEL_NAMES[$MODEL_IDX]}"
+echo ""
+echo " Selected: ${MODEL_SHORT}"
+echo " Tag:      ${MODEL_TAG}"
+
+export MODEL_TAG MODEL_SHORT
+
+# ---- Bundle selection -------------------------------------------------------
 echo ""
 echo " Select a Bundle:"
 echo ""

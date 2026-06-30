@@ -8,7 +8,8 @@ set -euo pipefail
 # Required env vars (set by llm-setup-bundle.sh):
 #   BUNDLE        = 1 | 2 | 3
 #   POD_INDEX     = 1..10  (default 1)
-#   MODEL         = e.g. gemma-4-31B-it-GGUF
+#   MODEL_TAG     = full Ollama pull string (e.g. hf.co/unsloth/...)
+#   MODEL_SHORT   = display name (e.g. "Gemma 4 31B")
 #   OLLAMA_NUM_CTX
 #   RATE_LIMIT_RPM
 #   LLM_API_KEY   (may be empty — generated if so)
@@ -28,7 +29,7 @@ _fail() {
   if [ -n "${WEBHOOK_URL:-}" ]; then
     curl -sf -X POST "$WEBHOOK_URL" \
       -H "Content-Type: application/json" \
-      -d "{\"status\":\"failure\",\"error\":\"$1\",\"pod\":${POD_INDEX},\"bundle\":${BUNDLE},\"model\":\"${MODEL:-unknown}\"}" \
+      -d "{\"status\":\"failure\",\"error\":\"$1\",\"pod\":${POD_INDEX},\"bundle\":${BUNDLE},\"model\":\"${MODEL_TAG:-unknown}\"}" \
       || true
   fi
   exit 1
@@ -142,10 +143,10 @@ main() {
   echo "Ollama is ready."
 
   # ---- Step 10: Pull model --------------------------------------------------
-  echo "Pulling model hf.co/unsloth/${MODEL}:UD-Q4_K_XL ..."
+  echo "Pulling model: ${MODEL_SHORT} (${MODEL_TAG}) ..."
   nsenter -t "$POD_PID" -m -- bash -c "
-    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama pull 'hf.co/unsloth/${MODEL}:UD-Q4_K_XL'
-  " || _fail "Model pull failed"
+    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama pull '${MODEL_TAG}'
+  " || _fail "Model pull failed: ${MODEL_TAG}"
   echo "Model pulled successfully."
 
   # ---- Step 11: Start gateway inside pod ------------------------------------
@@ -153,7 +154,7 @@ main() {
   ADMIN_TOKEN_VAL="${ADMIN_TOKEN:-}"
   nsenter -t "$POD_PID" -m -- bash -c "
     export OLLAMA_URL=http://localhost:${OLLAMA_PORT}
-    export MODEL=${MODEL}
+    export MODEL=${MODEL_TAG}
     export OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX}
     export RATE_LIMIT_RPM=${RATE_LIMIT_RPM}
     export LLM_API_KEY=${LLM_API_KEY}
@@ -300,9 +301,10 @@ main() {
   echo ""
   echo "================================================"
   echo " AGH LLM Suite — Pod ${POD_INDEX} Deployed"
-  echo " Bundle ${BUNDLE} | ${MODEL}"
+  echo " Bundle ${BUNDLE} | ${MODEL_SHORT}"
   echo "================================================"
   echo " Pod      : ${POD_NAME}"
+  echo " Model    : ${MODEL_SHORT}"
   echo " API URL  : ${API_URL:-unknown}"
   echo " API Key  : ${LLM_API_KEY}"
   [ "${BUNDLE}" -ge 2 ] && echo " Admin    : ${ADMIN_TOKEN:-}"
@@ -318,7 +320,7 @@ main() {
 
   if [ -n "${WEBHOOK_URL:-}" ]; then
     BODY="{\"status\":\"success\",\"pod\":${POD_INDEX},\"bundle\":${BUNDLE}"
-    BODY="${BODY},\"api_url\":\"${API_URL:-}\",\"api_key\":\"${LLM_API_KEY}\",\"model\":\"${MODEL}\""
+    BODY="${BODY},\"api_url\":\"${API_URL:-}\",\"api_key\":\"${LLM_API_KEY}\",\"model\":\"${MODEL_TAG}\",\"model_name\":\"${MODEL_SHORT}\""
     [ "${BUNDLE}" -ge 2 ] && BODY="${BODY},\"admin_token\":\"${ADMIN_TOKEN:-}\""
     [ "${BUNDLE}" -eq 3 ] && BODY="${BODY},\"vd_url\":\"${VD_URL:-}\",\"vd_password\":\"${VD_PASS:-changeme}\""
     BODY="${BODY}}"
