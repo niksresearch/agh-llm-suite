@@ -72,8 +72,9 @@ fi
 # Phase 1: Fetch / update repo
 # ---------------------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "Repo found — pulling latest..."
-  git -C "$INSTALL_DIR" pull --ff-only
+  echo "Repo found — updating..."
+  git -C "$INSTALL_DIR" fetch origin
+  git -C "$INSTALL_DIR" reset --hard origin/main
 else
   git clone https://github.com/niksresearch/agh-llm-suite.git "$INSTALL_DIR"
 fi
