@@ -183,21 +183,7 @@ case "$BUNDLE" in
   *) echo "Invalid choice. Must be 1, 2, or 3." >&2; exit 1 ;;
 esac
 
-echo " Active pods:"
-if ps aux | grep -q "[s]leep infinity"; then
-  ps aux | grep "[s]leep infinity" | awk '{print "  PID " $2}' | head -10
-else
-  echo "  (none)"
-fi
-echo ""
-
-read -rp " Pod slot [1-10, default 1]: " POD_INDEX_INPUT < /dev/tty
-POD_INDEX="${POD_INDEX_INPUT:-1}"
-
-if ! [[ "$POD_INDEX" =~ ^([1-9]|10)$ ]]; then
-  echo "Invalid pod slot. Must be 1-10." >&2; exit 1
-fi
-echo ""
+POD_INDEX=1
 
 if [ "$BUNDLE" = "3" ]; then
   while true; do
