@@ -113,7 +113,7 @@ if [ "$TIER_IDX" -ge 1 ] && [ "$TIER_IDX" -le 2 ]; then
   echo "  [2] Reasoning   — math, science, step-by-step analysis"
   echo ""
   while true; do
-    read -rp " Enter category [1/2]: " CAT_CHOICE
+    read -rp " Enter category [1/2]: " CAT_CHOICE < /dev/tty
     case "$CAT_CHOICE" in
       1) CATEGORY="Coding";    break ;;
       2) CATEGORY="Reasoning"; break ;;
@@ -140,7 +140,7 @@ for i in "${!MODEL_NAMES[@]}"; do
 done
 
 while true; do
-  read -rp " Enter model [1-${MODEL_COUNT}]: " MODEL_CHOICE
+  read -rp " Enter model [1-${MODEL_COUNT}]: " MODEL_CHOICE < /dev/tty
   if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && \
      [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "$MODEL_COUNT" ]; then
     break
@@ -175,7 +175,7 @@ echo "      Everything in Bundle 2, plus:"
 echo "      XFCE desktop (VNC, password-protected)"
 echo "      UduChat (Open WebUI) as Chrome icon on desktop"
 echo ""
-read -rp " Enter bundle [1/2/3]: " BUNDLE
+read -rp " Enter bundle [1/2/3]: " BUNDLE < /dev/tty
 echo ""
 
 case "$BUNDLE" in
@@ -191,7 +191,7 @@ else
 fi
 echo ""
 
-read -rp " Pod slot [1-10, default 1]: " POD_INDEX_INPUT
+read -rp " Pod slot [1-10, default 1]: " POD_INDEX_INPUT < /dev/tty
 POD_INDEX="${POD_INDEX_INPUT:-1}"
 
 if ! [[ "$POD_INDEX" =~ ^([1-9]|10)$ ]]; then
@@ -201,8 +201,8 @@ echo ""
 
 if [ "$BUNDLE" = "3" ]; then
   while true; do
-    read -rsp " Virtual Desktop password: " VD_PASS; echo ""
-    read -rsp " Confirm password:         " VD_PASS2; echo ""
+    read -rsp " Virtual Desktop password: " VD_PASS < /dev/tty; echo ""
+    read -rsp " Confirm password:         " VD_PASS2 < /dev/tty; echo ""
     [ "$VD_PASS" = "$VD_PASS2" ] && break
     echo " Passwords do not match — try again."
   done
