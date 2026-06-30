@@ -87,7 +87,8 @@ main() {
   echo "Installing common dependencies inside pod..."
   nsenter -t "$POD_PID" -m -- bash -c "
     apt-get update -qq
-    apt-get install -y --no-install-recommends curl python3 python3-pip python3-venv
+    apt-get install -y --no-install-recommends \
+      curl python3 python3-pip python3-venv python3.11 python3.11-venv
   " || _fail "Dependency install failed"
 
   # ---- Step 4: Install / upgrade Ollama inside pod -------------------------
@@ -100,7 +101,7 @@ main() {
   echo "Creating Python venv and installing gateway dependencies..."
   VENV="/opt/llm-env-pod-${POD_INDEX}"
   nsenter -t "$POD_PID" -m -- bash -c "
-    python3 -m venv ${VENV}
+    python3.11 -m venv ${VENV}
     ${VENV}/bin/pip install --quiet \
       fastapi==0.138.2 uvicorn[standard]==0.49.0 httpx==0.28.1 pydantic==2.13.4
   " || _fail "Python venv setup failed"
