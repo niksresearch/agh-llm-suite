@@ -233,7 +233,7 @@ main() {
 
     nsenter -t "$POD_PID" -m -- bash -c "
       apt-get install -y --no-install-recommends \
-        xvfb xfce4 xfce4-terminal x11vnc websockify chromium-browser dbus-x11 xauth
+        xvfb xfce4 xfce4-terminal x11vnc websockify novnc chromium-browser dbus-x11 xauth
     " || _fail "Desktop packages install failed"
 
     nsenter -t "$POD_PID" -m -- bash -c "
@@ -265,9 +265,10 @@ main() {
       echo \$! > /var/run/${POD_NAME}-vnc.pid
     "
 
-    # websockify
+    # websockify — serve noVNC web client + proxy to VNC
     nsenter -t "$POD_PID" -m -- bash -c "
-      nohup websockify ${WS_PORT} localhost:${VNC_PORT} > ${LOG_DIR}/websockify.log 2>&1 &
+      nohup websockify --web /usr/share/novnc/ ${WS_PORT} localhost:${VNC_PORT} \
+        > ${LOG_DIR}/websockify.log 2>&1 &
       echo \$! > /var/run/${POD_NAME}-ws.pid
     " || true
 
