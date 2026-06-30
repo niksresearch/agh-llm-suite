@@ -2,33 +2,30 @@
 set -euo pipefail
 
 # AGH LLM Suite — Setup Script
-#
-# Interactive (SSH):
-#   bash /opt/agh-llm-suite/startup.sh
+# Run this after SSH-ing into the GPU instance:
 #   curl -fsSL https://raw.githubusercontent.com/niksresearch/agh-llm-suite/main/startup.sh | bash
-#
-# Cloud-init (Shadeform / unattended boot):
-#   Runs at first boot with no TTY — installs prereqs + clones repo.
-#   SSH in after boot and run startup.sh again to provision a pod.
+# or if repo already cloned:
+#   bash /opt/agh-llm-suite/startup.sh
 
 INSTALL_DIR="/opt/agh-llm-suite"
 
 # ---------------------------------------------------------------------------
-# Phase 0: Prerequisites (runs in both modes — idempotent)
+# Phase 0: Prerequisites (idempotent — safe to run multiple times)
 # ---------------------------------------------------------------------------
 echo "[ AGH LLM Suite ] Checking prerequisites..."
 
 apt-get update -qq
 apt-get install -y --no-install-recommends git curl
 
-# NVIDIA driver check
+# NVIDIA driver
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "NVIDIA driver not found — installing..."
   OS_ID="$(. /etc/os-release && echo "$ID")"
   case "$OS_ID" in
     ubuntu)
       apt-get install -y --no-install-recommends ubuntu-drivers-common
-      ubuntu-drivers autoinstall || apt-get install -y nvidia-driver-580-server nvidia-utils-580-server nvidia-modprobe
+      ubuntu-drivers autoinstall || \
+        apt-get install -y nvidia-driver-580-server nvidia-utils-580-server nvidia-modprobe
       ;;
     debian)
       echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" \
@@ -37,26 +34,26 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
       apt-get install -y -t bookworm-backports nvidia-driver firmware-misc-nonfree
       ;;
     *)
-      echo "WARNING: Unknown OS '$OS_ID' — skipping NVIDIA driver install. Install manually." >&2
+      echo "WARNING: Unknown OS '$OS_ID' — install NVIDIA drivers manually." >&2
       ;;
   esac
 else
   echo "NVIDIA driver OK: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
 fi
 
-# envPod check
+# envPod
 if ! command -v envpod >/dev/null 2>&1; then
   echo "envPod not found — installing..."
   curl -fsSL https://envpod.dev/install.sh | bash
   ENVPOD_BIN=$(command -v envpod 2>/dev/null || echo "/usr/local/bin/envpod")
   [[ -x "$ENVPOD_BIN" ]] || { echo "ERROR: envpod not found after install." >&2; exit 1; }
-  echo "envPod installed: $("$ENVPOD_BIN" --version 2>&1 | head -1)"
+  echo "envPod OK: $("$ENVPOD_BIN" --version 2>&1 | head -1)"
 else
   echo "envPod OK: $(envpod --version 2>&1 | head -1)"
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 1: Fetch / update repo (idempotent)
+# Phase 1: Fetch / update repo
 # ---------------------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "Repo found — pulling latest..."
@@ -70,21 +67,7 @@ chmod +x "$INSTALL_DIR/startup.sh" \
          "$INSTALL_DIR/bootstrap.sh"
 
 # ---------------------------------------------------------------------------
-# Non-interactive (cloud-init / no TTY): prereqs done, print SSH instructions
-# ---------------------------------------------------------------------------
-if [ ! -t 0 ]; then
-  echo ""
-  echo "======================================================="
-  echo " AGH LLM Suite prereqs installed. GPU instance ready."
-  echo " SSH in and run:"
-  echo ""
-  echo "   bash $INSTALL_DIR/startup.sh"
-  echo "======================================================="
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Interactive (SSH): prompt for bundle + pod slot
+# Phase 2: Interactive — prompt for bundle + pod slot
 # ---------------------------------------------------------------------------
 echo ""
 echo "=============================================="
@@ -115,7 +98,6 @@ case "$BUNDLE" in
   *) echo "Invalid choice. Must be 1, 2, or 3." >&2; exit 1 ;;
 esac
 
-# Show which pod slots are already running
 echo " Active pods:"
 if ps aux | grep -q "[s]leep infinity"; then
   ps aux | grep "[s]leep infinity" | awk '{print "  PID " $2}' | head -10
