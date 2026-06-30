@@ -90,10 +90,9 @@ main() {
     apt-get install -y --no-install-recommends curl python3 python3-pip python3-venv
   " || _fail "Dependency install failed"
 
-  # ---- Step 4: Install Ollama inside pod (idempotent) -----------------------
-  echo "Checking / installing Ollama inside pod..."
+  # ---- Step 4: Install / upgrade Ollama inside pod -------------------------
+  echo "Installing / upgrading Ollama inside pod..."
   nsenter -t "$POD_PID" -m -- bash -c "
-    command -v ollama >/dev/null 2>&1 && exit 0
     curl -fsSL https://ollama.ai/install.sh | sh
   " || _fail "Ollama install failed"
 
