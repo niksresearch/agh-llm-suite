@@ -183,35 +183,24 @@ case "$BUNDLE" in
   *) echo "Invalid choice. Must be 1, 2, or 3." >&2; exit 1 ;;
 esac
 
-# ---- Auto-assign next free pod slot ----------------------------------------
-echo ""
-echo " Scanning active pods..."
-ACTIVE_COUNT=0
+# ---- Auto-assign next free pod slot (silent) --------------------------------
 POD_INDEX=""
 for i in $(seq 1 10); do
   PID_FILE="/var/run/agh-llm-pod-${i}-pod.pid"
   if [ -f "$PID_FILE" ]; then
     STORED_PID=$(cat "$PID_FILE" 2>/dev/null || true)
     if [ -n "$STORED_PID" ] && kill -0 "$STORED_PID" 2>/dev/null; then
-      echo "  Pod ${i}: RUNNING (PID ${STORED_PID})"
-      ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
-      continue
+      continue  # slot in use
     fi
   fi
-  # First free slot
-  if [ -z "$POD_INDEX" ]; then
-    POD_INDEX=$i
-  fi
+  POD_INDEX=$i
+  break
 done
 
 if [ -z "$POD_INDEX" ]; then
-  echo " ERROR: All 10 pod slots are in use on this GPU." >&2
+  echo "ERROR: All 10 pod slots are in use on this GPU." >&2
   exit 1
 fi
-
-[ "$ACTIVE_COUNT" -eq 0 ] && echo "  (none running)"
-echo " Auto-assigning pod slot: ${POD_INDEX}"
-echo ""
 
 if [ "$BUNDLE" = "3" ]; then
   while true; do
