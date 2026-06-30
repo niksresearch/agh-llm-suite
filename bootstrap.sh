@@ -51,14 +51,7 @@ main() {
   LOG_DIR="/var/log/${POD_NAME}"
   mkdir -p "$LOG_DIR"
 
-  # Model storage — prefer large ephemeral disk if present, fallback to /data
-  if [ -d "/ephemeral" ] && [ "$(df --output=avail /ephemeral 2>/dev/null | tail -1)" -gt 10485760 ]; then
-    OLLAMA_MODELS_DIR="/ephemeral/ollama/models"
-  else
-    OLLAMA_MODELS_DIR="/data/ollama/models"
-  fi
-  mkdir -p "$OLLAMA_MODELS_DIR"
-  echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT} Models=${OLLAMA_MODELS_DIR}"
+  echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT}"
 
   # ---- Step 2: Launch envPod ------------------------------------------------
   # Init pod first (idempotent — OK if already exists)
@@ -91,14 +84,17 @@ main() {
   [[ -n "${POD_PID:-}" ]] || _fail "Could not get PID for pod ${POD_NAME}"
   echo "Pod PID: $POD_PID"
 
-  # Bind /ephemeral into pod's mount namespace so Ollama can write large models there.
-  # /proc/1/root is the host root visible from inside any mount namespace.
+  # Redirect Ollama's default model dir (/root/.ollama) to the large ephemeral disk.
+  # /proc/1/root resolves to the host root from inside any mount namespace — this
+  # lets a symlink inside the pod point to the host's /ephemeral without any bind-mount.
   if [ -d "/ephemeral" ]; then
+    mkdir -p /ephemeral/ollama/models
     nsenter -t "$POD_PID" -m -- bash -c "
-      mkdir -p /ephemeral
-      mountpoint -q /ephemeral 2>/dev/null || mount --bind /proc/1/root/ephemeral /ephemeral
-    " && echo "Bound /ephemeral into pod." \
-      || echo "WARNING: /ephemeral bind-mount failed — models may land on OS disk." >&2
+      rm -rf /root/.ollama 2>/dev/null || true
+      mkdir -p /root
+      ln -sfn /proc/1/root/ephemeral/ollama /root/.ollama
+    " && echo "Ollama models → /ephemeral/ollama." \
+      || echo "WARNING: Could not symlink Ollama storage — models may fill OS disk." >&2
   fi
 
   # ---- Step 3: Install deps inside pod --------------------------------------
@@ -162,7 +158,6 @@ main() {
     nohup env \
       OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} \
       OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
-      OLLAMA_MODELS=${OLLAMA_MODELS_DIR} \
       ollama serve > ${LOG_DIR}/ollama.log 2>&1 &
     echo \$! > /var/run/${POD_NAME}-ollama.pid
   "
@@ -183,9 +178,9 @@ main() {
   # ---- Step 10: Pull model --------------------------------------------------
   echo "Pulling model: ${MODEL_SHORT} (${MODEL_TAG}) ..."
   # Remove any corrupt partial blobs before pulling (leftover from prior failed runs)
-  find "${OLLAMA_MODELS_DIR}/blobs" -name "*-partial" -delete 2>/dev/null || true
+  find "/ephemeral/ollama/models/blobs" -name "*-partial" -delete 2>/dev/null || true
   nsenter -t "$POD_PID" -m -- bash -c "
-    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} OLLAMA_MODELS=${OLLAMA_MODELS_DIR} ollama pull '${MODEL_TAG}'
+    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama pull '${MODEL_TAG}'
   " || _fail "Model pull failed: ${MODEL_TAG}"
   echo "Model pulled successfully."
 
