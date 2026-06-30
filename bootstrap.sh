@@ -137,9 +137,12 @@ main() {
 
   # ---- Step 9: Start Ollama inside pod --------------------------------------
   echo "Starting Ollama inside pod (port ${OLLAMA_PORT})..."
+  STORED_OLLAMA=$(cat "/var/run/${POD_NAME}-ollama.pid" 2>/dev/null || true)
+  [ -n "$STORED_OLLAMA" ] && kill "$STORED_OLLAMA" 2>/dev/null || true
+  sleep 1
   nsenter -t "$POD_PID" -m -- bash -c "
-    OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
-      nohup ollama serve > ${LOG_DIR}/ollama.log 2>&1 &
+    nohup env OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
+      ollama serve > ${LOG_DIR}/ollama.log 2>&1 &
     echo \$! > /var/run/${POD_NAME}-ollama.pid
   "
 
@@ -166,17 +169,21 @@ main() {
   # ---- Step 11: Start gateway inside pod ------------------------------------
   echo "Starting LLM gateway (port ${GATEWAY_PORT})..."
   ADMIN_TOKEN_VAL="${ADMIN_TOKEN:-}"
+  STORED_GW=$(cat "/var/run/${POD_NAME}-gateway.pid" 2>/dev/null || true)
+  [ -n "$STORED_GW" ] && kill "$STORED_GW" 2>/dev/null || true
+  sleep 1
   nsenter -t "$POD_PID" -m -- bash -c "
-    export OLLAMA_URL=http://localhost:${OLLAMA_PORT}
-    export MODEL=${MODEL_TAG}
-    export OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX}
-    export RATE_LIMIT_RPM=${RATE_LIMIT_RPM}
-    export LLM_API_KEY=${LLM_API_KEY}
-    export ADMIN_TOKEN=${ADMIN_TOKEN_VAL}
-    export KEYFILE=${DATA_DIR}/keys.txt
-    export BUNDLE=${BUNDLE}
     cd ${GW_DIR}
-    nohup ${VENV}/bin/uvicorn app:app --host 0.0.0.0 --port ${GATEWAY_PORT} \
+    nohup env \
+      OLLAMA_URL=http://localhost:${OLLAMA_PORT} \
+      MODEL=${MODEL_TAG} \
+      OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} \
+      RATE_LIMIT_RPM=${RATE_LIMIT_RPM} \
+      LLM_API_KEY=${LLM_API_KEY} \
+      ADMIN_TOKEN=${ADMIN_TOKEN_VAL} \
+      KEYFILE=${DATA_DIR}/keys.txt \
+      BUNDLE=${BUNDLE} \
+      ${VENV}/bin/uvicorn app:app --host 0.0.0.0 --port ${GATEWAY_PORT} \
       > ${LOG_DIR}/gateway.log 2>&1 &
     echo \$! > /var/run/${POD_NAME}-gateway.pid
   "
@@ -195,6 +202,9 @@ main() {
   " || _fail "cloudflared install failed"
 
   echo "Starting cloudflared API tunnel..."
+  STORED_CF=$(cat "/var/run/${POD_NAME}-cf-api.pid" 2>/dev/null || true)
+  [ -n "$STORED_CF" ] && kill "$STORED_CF" 2>/dev/null || true
+  sleep 1
   nsenter -t "$POD_PID" -m -- bash -c "
     if [ -n '${TUNNEL_TOKEN:-}' ]; then
       nohup cloudflared tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-} \
@@ -242,6 +252,9 @@ main() {
     DISPLAY_NUM=$((10 + POD_INDEX))
 
     # Xvfb
+    STORED_XVFB=$(cat "/var/run/${POD_NAME}-xvfb.pid" 2>/dev/null || true)
+    [ -n "$STORED_XVFB" ] && kill "$STORED_XVFB" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
       nohup Xvfb :${DISPLAY_NUM} -screen 0 1280x800x24 > ${LOG_DIR}/xvfb.log 2>&1 &
       echo \$! > /var/run/${POD_NAME}-xvfb.pid
@@ -249,13 +262,19 @@ main() {
     sleep 2
 
     # XFCE
+    STORED_XFCE=$(cat "/var/run/${POD_NAME}-xfce4.pid" 2>/dev/null || true)
+    [ -n "$STORED_XFCE" ] && kill "$STORED_XFCE" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
-      DISPLAY=:${DISPLAY_NUM} nohup startxfce4 > ${LOG_DIR}/xfce4.log 2>&1 &
+      nohup env DISPLAY=:${DISPLAY_NUM} startxfce4 > ${LOG_DIR}/xfce4.log 2>&1 &
       echo \$! > /var/run/${POD_NAME}-xfce4.pid
     "
     sleep 3
 
     # x11vnc
+    STORED_VNC=$(cat "/var/run/${POD_NAME}-vnc.pid" 2>/dev/null || true)
+    [ -n "$STORED_VNC" ] && kill "$STORED_VNC" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
       mkdir -p /root/.vnc
       x11vnc -storepasswd '${VD_PASS}' /root/.vnc/passwd
@@ -265,6 +284,9 @@ main() {
     "
 
     # websockify — serve noVNC web client + proxy to VNC
+    STORED_WS=$(cat "/var/run/${POD_NAME}-ws.pid" 2>/dev/null || true)
+    [ -n "$STORED_WS" ] && kill "$STORED_WS" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
       nohup websockify --web /usr/share/novnc/ ${WS_PORT} localhost:${VNC_PORT} \
         > ${LOG_DIR}/websockify.log 2>&1 &
@@ -273,12 +295,16 @@ main() {
 
     # UduChat (Open WebUI)
     UDUCHAT_PORT=$((3000 + POD_INDEX - 1))
+    STORED_UDUCHAT=$(cat "/var/run/${POD_NAME}-uduchat.pid" 2>/dev/null || true)
+    [ -n "$STORED_UDUCHAT" ] && kill "$STORED_UDUCHAT" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
-      export WEBUI_NAME='UduChat'
-      export OLLAMA_BASE_URL='http://localhost:${OLLAMA_PORT}'
-      export DATA_DIR='${DATA_DIR}/uduchat'
       mkdir -p '${DATA_DIR}/uduchat'
-      nohup ${VENV}/bin/open-webui serve --host 0.0.0.0 --port ${UDUCHAT_PORT} \
+      nohup env \
+        WEBUI_NAME=UduChat \
+        OLLAMA_BASE_URL=http://localhost:${OLLAMA_PORT} \
+        DATA_DIR=${DATA_DIR}/uduchat \
+        ${VENV}/bin/open-webui serve --host 0.0.0.0 --port ${UDUCHAT_PORT} \
         > ${LOG_DIR}/uduchat.log 2>&1 &
       echo \$! > /var/run/${POD_NAME}-uduchat.pid
     " || _fail "UduChat failed to start"
@@ -292,6 +318,9 @@ main() {
     "
 
     # cloudflared VD tunnel
+    STORED_CF_VD=$(cat "/var/run/${POD_NAME}-cf-vd.pid" 2>/dev/null || true)
+    [ -n "$STORED_CF_VD" ] && kill "$STORED_CF_VD" 2>/dev/null || true
+    sleep 1
     nsenter -t "$POD_PID" -m -- bash -c "
       nohup cloudflared tunnel --no-autoupdate --url http://localhost:${WS_PORT} \
         > ${LOG_DIR}/cloudflared-vd.log 2>&1 &
