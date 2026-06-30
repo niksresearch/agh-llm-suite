@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bootstrap.sh — AGH LLM Suite
-# Called by llm-setup-bundle.sh after the envPod is already running.
-# Services run as processes inside the pod via nsenter, NOT docker-compose.
+# bootstrap.sh — AGH LLM Suite (multi-pod / envPod architecture)
+# Called by llm-setup-bundle.sh after sourcing the bundle env and setting all vars.
+# envPod is already installed on the host (done by startup.sh prereq phase).
 #
 # Required env vars (set by llm-setup-bundle.sh):
-#   BUNDLE, MODEL, OLLAMA_NUM_CTX, RATE_LIMIT_RPM,
-#   LLM_API_KEY (may be empty), ADMIN_TOKEN (may be empty, Bundle 2+ only),
-#   WEBHOOK_URL (optional), TUNNEL_TOKEN (optional),
-#   VD_PASS (Bundle 3, default "changeme"), SCRIPT_DIR
+#   BUNDLE        = 1 | 2 | 3
+#   POD_INDEX     = 1..10  (default 1)
+#   MODEL         = e.g. gemma-4-31B-it-GGUF
+#   OLLAMA_NUM_CTX
+#   RATE_LIMIT_RPM
+#   LLM_API_KEY   (may be empty — generated if so)
+#   ADMIN_TOKEN   (may be empty — generated if so, Bundle 2+)
+#   WEBHOOK_URL   (optional)
+#   TUNNEL_TOKEN  (optional)
+#   VD_PASS       (Bundle 3, default "changeme")
+#   SCRIPT_DIR    = path to llm-setup/ dir
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
@@ -21,7 +28,7 @@ _fail() {
   if [ -n "${WEBHOOK_URL:-}" ]; then
     curl -sf -X POST "$WEBHOOK_URL" \
       -H "Content-Type: application/json" \
-      -d "{\"status\":\"failure\",\"error\":\"$1\",\"bundle\":${BUNDLE},\"model\":\"${MODEL:-unknown}\"}" \
+      -d "{\"status\":\"failure\",\"error\":\"$1\",\"pod\":${POD_INDEX},\"bundle\":${BUNDLE},\"model\":\"${MODEL:-unknown}\"}" \
       || true
   fi
   exit 1
@@ -32,51 +39,68 @@ _fail() {
 # ---------------------------------------------------------------------------
 main() {
 
-  # ---- 1. Find the envPod PID ----------------------------------------------
-  POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | head -1)
-  [[ -n "$POD_PID" ]] || _fail "envPod not found. Run llm-setup-bundle.sh to start the pod first."
+  # ---- Step 1: Compute ports + dirs -----------------------------------------
+  POD_INDEX="${POD_INDEX:-1}"
+  POD_NAME="agh-llm-pod-${POD_INDEX}"
+  OLLAMA_PORT=$((11430 + POD_INDEX))
+  GATEWAY_PORT=$((8000  + POD_INDEX))
+  VNC_PORT=$((5900  + POD_INDEX))
+  WS_PORT=$((6080  + POD_INDEX))
+  DATA_DIR="/data/${POD_NAME}"
+  LOG_DIR="/var/log/${POD_NAME}"
+  mkdir -p "$LOG_DIR"
+  echo "Pod ${POD_INDEX}: Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT}"
+
+  # ---- Step 2: Launch envPod ------------------------------------------------
+  if ps aux | grep -v grep | grep -q "${POD_NAME}"; then
+    echo "Pod ${POD_NAME} already running — reusing."
+    POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | head -1)
+  else
+    envpod run --name "$POD_NAME" --gpu -- sleep infinity &
+    POD_PID=""
+    for i in $(seq 1 20); do
+      POD_PID=$(ps aux | grep "sleep infinity" | grep -v grep | awk '{print $2}' | tail -1)
+      [ -n "$POD_PID" ] && break
+      sleep 3
+    done
+  fi
+  [[ -n "${POD_PID:-}" ]] || _fail "Could not find PID for pod ${POD_NAME}"
   echo "Pod PID: $POD_PID"
 
-  # ---- 2. Install common deps inside pod ------------------------------------
+  # ---- Step 3: Install deps inside pod --------------------------------------
   echo "Installing common dependencies inside pod..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
+  nsenter -t "$POD_PID" -m -- bash -c "
     apt-get update -qq
     apt-get install -y --no-install-recommends curl python3 python3-pip python3-venv
-  "
+  " || _fail "Dependency install failed"
 
-  # ---- 3. Install Ollama inside pod (idempotent) ----------------------------
+  # ---- Step 4: Install Ollama inside pod (idempotent) -----------------------
   echo "Checking / installing Ollama inside pod..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    if ! command -v ollama >/dev/null 2>&1; then
-      curl -fsSL https://ollama.ai/install.sh | sh
-    else
-      echo 'Ollama already installed — skipping.'
-    fi
-  "
+  nsenter -t "$POD_PID" -m -- bash -c "
+    command -v ollama >/dev/null 2>&1 && exit 0
+    curl -fsSL https://ollama.ai/install.sh | sh
+  " || _fail "Ollama install failed"
 
-  # ---- 4. Create Python venv + install gateway deps -------------------------
+  # ---- Step 5: Python venv + gateway deps inside pod ------------------------
   echo "Creating Python venv and installing gateway dependencies..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    python3 -m venv /opt/llm-env
-    /opt/llm-env/bin/pip install --quiet \
-      fastapi==0.138.2 \
-      uvicorn[standard]==0.49.0 \
-      httpx==0.28.1 \
-      pydantic==2.13.4
-  "
+  VENV="/opt/llm-env-pod-${POD_INDEX}"
+  nsenter -t "$POD_PID" -m -- bash -c "
+    python3 -m venv ${VENV}
+    ${VENV}/bin/pip install --quiet \
+      fastapi==0.138.2 uvicorn[standard]==0.49.0 httpx==0.28.1 pydantic==2.13.4
+  " || _fail "Python venv setup failed"
 
-  # ---- 5. Copy gateway source into pod filesystem ---------------------------
-  # Gateway files live at $SCRIPT_DIR/gateway/ on the host.
-  # Write them into the pod at /opt/llm-gateway/ via stdin to handle mount ns.
+  # ---- Step 6: Copy gateway source into pod ---------------------------------
   echo "Copying gateway source into pod..."
-  nsenter -t "${POD_PID}" -m -- bash -c "mkdir -p /opt/llm-gateway"
+  GW_DIR="/opt/llm-gateway-pod-${POD_INDEX}"
+  nsenter -t "$POD_PID" -m -- bash -c "mkdir -p ${GW_DIR}"
   for f in app.py config.py keystore.py ratelimit.py; do
-    [ -f "$SCRIPT_DIR/gateway/$f" ] || _fail "Gateway source file not found: $SCRIPT_DIR/gateway/$f"
-    nsenter -t "${POD_PID}" -m -- bash -c "cat > /opt/llm-gateway/$f" < "$SCRIPT_DIR/gateway/$f"
+    [ -f "$SCRIPT_DIR/gateway/$f" ] || _fail "Gateway source missing: $f"
+    nsenter -t "$POD_PID" -m -- bash -c "cat > ${GW_DIR}/$f" < "$SCRIPT_DIR/gateway/$f"
   done
   echo "Gateway source copied."
 
-  # ---- 6. Generate secrets --------------------------------------------------
+  # ---- Step 7: Generate secrets ---------------------------------------------
   if [ -z "${LLM_API_KEY:-}" ]; then
     LLM_API_KEY="$(openssl rand -hex 32)"
     echo "Generated LLM_API_KEY."
@@ -86,195 +110,183 @@ main() {
     echo "Generated ADMIN_TOKEN."
   fi
 
-  # ---- 7. Write keyfile inside pod ------------------------------------------
+  # ---- Step 8: Write keyfile inside pod -------------------------------------
   echo "Writing keyfile inside pod..."
   ISO_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    mkdir -p /data
-    echo 'k_bootstrap:${LLM_API_KEY}:bootstrap:${ISO_DATE}' > /data/keys.txt
-    chmod 600 /data/keys.txt
+  nsenter -t "$POD_PID" -m -- bash -c "
+    mkdir -p ${DATA_DIR}
+    echo 'k_bootstrap:${LLM_API_KEY}:bootstrap:${ISO_DATE}' > ${DATA_DIR}/keys.txt
+    chmod 600 ${DATA_DIR}/keys.txt
   "
   echo "Keyfile written."
 
-  # ---- 8. Start Ollama inside pod -------------------------------------------
-  echo "Starting Ollama inside pod..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} nohup ollama serve > /var/log/ollama.log 2>&1 &
-    echo \$! > /var/run/ollama.pid
+  # ---- Step 9: Start Ollama inside pod --------------------------------------
+  echo "Starting Ollama inside pod (port ${OLLAMA_PORT})..."
+  nsenter -t "$POD_PID" -m -- bash -c "
+    OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX} OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} \
+      nohup ollama serve > ${LOG_DIR}/ollama.log 2>&1 &
+    echo \$! > /var/run/${POD_NAME}-ollama.pid
   "
 
   # Wait up to 120 s for Ollama to become ready
   echo "Waiting for Ollama to become ready..."
-  ollama_ready=0
   for i in $(seq 1 24); do
-    if nsenter -t "${POD_PID}" -m -- bash -c "ollama list" >/dev/null 2>&1; then
-      ollama_ready=1
-      break
-    fi
-    echo "Waiting for Ollama... ($i/24)"
+    nsenter -t "$POD_PID" -m -- bash -c \
+      "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama list" >/dev/null 2>&1 && break
+    echo "Waiting for Ollama (pod ${POD_INDEX})... ($i/24)"
     sleep 5
   done
-  [ "$ollama_ready" -eq 1 ] || _fail "Ollama did not start within 120s"
+  nsenter -t "$POD_PID" -m -- bash -c \
+    "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama list" >/dev/null 2>&1 \
+    || _fail "Ollama did not start within 120s"
   echo "Ollama is ready."
 
-  # ---- 9. Pull model --------------------------------------------------------
+  # ---- Step 10: Pull model --------------------------------------------------
   echo "Pulling model hf.co/unsloth/${MODEL}:UD-Q4_K_XL ..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    ollama pull 'hf.co/unsloth/${MODEL}:UD-Q4_K_XL'
+  nsenter -t "$POD_PID" -m -- bash -c "
+    OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama pull 'hf.co/unsloth/${MODEL}:UD-Q4_K_XL'
   " || _fail "Model pull failed"
   echo "Model pulled successfully."
 
-  # ---- 10. Start gateway (uvicorn) ------------------------------------------
-  echo "Starting LLM gateway (uvicorn)..."
+  # ---- Step 11: Start gateway inside pod ------------------------------------
+  echo "Starting LLM gateway (port ${GATEWAY_PORT})..."
   ADMIN_TOKEN_VAL="${ADMIN_TOKEN:-}"
-  nsenter -t "${POD_PID}" -m -- bash -c "
-    export OLLAMA_URL=http://localhost:11434
+  nsenter -t "$POD_PID" -m -- bash -c "
+    export OLLAMA_URL=http://localhost:${OLLAMA_PORT}
     export MODEL=${MODEL}
     export OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX}
     export RATE_LIMIT_RPM=${RATE_LIMIT_RPM}
     export LLM_API_KEY=${LLM_API_KEY}
     export ADMIN_TOKEN=${ADMIN_TOKEN_VAL}
-    export KEYFILE=/data/keys.txt
+    export KEYFILE=${DATA_DIR}/keys.txt
     export BUNDLE=${BUNDLE}
-    cd /opt/llm-gateway
-    nohup /opt/llm-env/bin/uvicorn app:app --host 0.0.0.0 --port 8000 \
-      > /var/log/llm-gateway.log 2>&1 &
-    echo \$! > /var/run/llm-gateway.pid
+    cd ${GW_DIR}
+    nohup ${VENV}/bin/uvicorn app:app --host 0.0.0.0 --port ${GATEWAY_PORT} \
+      > ${LOG_DIR}/gateway.log 2>&1 &
+    echo \$! > /var/run/${POD_NAME}-gateway.pid
   "
-  sleep 3  # brief wait for uvicorn to bind
+  sleep 3
   echo "Gateway started."
 
-  # ---- 11. Install cloudflared + start API tunnel ---------------------------
+  # ---- Step 12: Start cloudflared API tunnel --------------------------------
   echo "Installing cloudflared (if needed)..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
+  nsenter -t "$POD_PID" -m -- bash -c "
     if ! command -v cloudflared >/dev/null 2>&1; then
       curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-        -o /usr/local/bin/cloudflared
-      chmod +x /usr/local/bin/cloudflared
+        -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
     else
       echo 'cloudflared already installed — skipping.'
     fi
-  "
+  " || _fail "cloudflared install failed"
 
   echo "Starting cloudflared API tunnel..."
-  nsenter -t "${POD_PID}" -m -- bash -c "
+  nsenter -t "$POD_PID" -m -- bash -c "
     if [ -n '${TUNNEL_TOKEN:-}' ]; then
       nohup cloudflared tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-} \
-        > /var/log/cloudflared-api.log 2>&1 &
+        > ${LOG_DIR}/cloudflared-api.log 2>&1 &
     else
-      nohup cloudflared tunnel --no-autoupdate --url http://localhost:8000 \
-        > /var/log/cloudflared-api.log 2>&1 &
+      nohup cloudflared tunnel --no-autoupdate --url http://localhost:${GATEWAY_PORT} \
+        > ${LOG_DIR}/cloudflared-api.log 2>&1 &
     fi
-    echo \$! > /var/run/cloudflared-api.pid
+    echo \$! > /var/run/${POD_NAME}-cf-api.pid
   "
 
   # Grep for public URL (trycloudflare quick tunnel)
   echo "Waiting for API tunnel URL..."
   API_URL=""
   for i in $(seq 1 30); do
-    API_URL=$(nsenter -t "${POD_PID}" -m -- bash -c "
-      grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /var/log/cloudflared-api.log 2>/dev/null | head -1 || true
+    API_URL=$(nsenter -t "$POD_PID" -m -- bash -c "
+      grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' ${LOG_DIR}/cloudflared-api.log 2>/dev/null | head -1 || true
     ")
     [ -n "$API_URL" ] && break
     sleep 2
   done
   # Fallback: named tunnel URL (different log pattern)
   if [ -z "$API_URL" ]; then
-    API_URL=$(nsenter -t "${POD_PID}" -m -- bash -c "
-      grep -oP 'https://[^\s]+' /var/log/cloudflared-api.log 2>/dev/null \
+    API_URL=$(nsenter -t "$POD_PID" -m -- bash -c "
+      grep -oP 'https://[^\s]+' ${LOG_DIR}/cloudflared-api.log 2>/dev/null \
         | grep -v 'api\.cloudflare' | head -1 || true
     ")
   fi
   [ -n "$API_URL" ] || echo "WARNING: Could not determine API URL from cloudflared log." >&2
 
-  # ---- 12. [Bundle 3 only] Virtual Desktop + UduChat ------------------------
+  # ---- Step 13: [Bundle 3 only] Virtual Desktop + UduChat -------------------
   VD_URL=""
   if [ "${BUNDLE}" -eq 3 ]; then
-    echo "Setting up Virtual Desktop + UduChat (Bundle 3)..."
+    echo "Setting up Virtual Desktop + UduChat (Bundle 3, pod ${POD_INDEX})..."
 
-    # Install desktop packages
-    nsenter -t "${POD_PID}" -m -- bash -c "
+    nsenter -t "$POD_PID" -m -- bash -c "
       apt-get install -y --no-install-recommends \
-        xvfb xfce4 xfce4-terminal x11vnc websockify chromium-browser \
-        dbus-x11 xauth
-    "
+        xvfb xfce4 xfce4-terminal x11vnc websockify chromium-browser dbus-x11 xauth
+    " || _fail "Desktop packages install failed"
 
-    # Install Open WebUI (UduChat engine) inside venv
-    nsenter -t "${POD_PID}" -m -- bash -c "
-      /opt/llm-env/bin/pip install --quiet open-webui
+    nsenter -t "$POD_PID" -m -- bash -c "
+      ${VENV}/bin/pip install --quiet open-webui
     " || _fail "Open WebUI install failed"
 
-    # Start Xvfb
-    nsenter -t "${POD_PID}" -m -- bash -c "
-      nohup Xvfb :1 -screen 0 1280x800x24 > /var/log/xvfb.log 2>&1 &
-      echo \$! > /var/run/xvfb.pid
+    DISPLAY_NUM=$((10 + POD_INDEX))
+
+    # Xvfb
+    nsenter -t "$POD_PID" -m -- bash -c "
+      nohup Xvfb :${DISPLAY_NUM} -screen 0 1280x800x24 > ${LOG_DIR}/xvfb.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-xvfb.pid
     "
     sleep 2
 
-    # Start XFCE desktop
-    nsenter -t "${POD_PID}" -m -- bash -c "
-      DISPLAY=:1 nohup startxfce4 > /var/log/xfce4.log 2>&1 &
-      echo \$! > /var/run/xfce4.pid
+    # XFCE
+    nsenter -t "$POD_PID" -m -- bash -c "
+      DISPLAY=:${DISPLAY_NUM} nohup startxfce4 > ${LOG_DIR}/xfce4.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-xfce4.pid
     "
     sleep 3
 
-    # Set x11vnc password and start VNC server
-    VD_PASS="${VD_PASS:-changeme}"
-    nsenter -t "${POD_PID}" -m -- bash -c "
+    # x11vnc
+    nsenter -t "$POD_PID" -m -- bash -c "
       mkdir -p /root/.vnc
       x11vnc -storepasswd '${VD_PASS}' /root/.vnc/passwd
-      nohup x11vnc -display :1 -rfbauth /root/.vnc/passwd -forever -shared \
-        -rfbport 5900 > /var/log/x11vnc.log 2>&1 &
-      echo \$! > /var/run/x11vnc.pid
+      nohup x11vnc -display :${DISPLAY_NUM} -rfbauth /root/.vnc/passwd \
+        -forever -shared -rfbport ${VNC_PORT} > ${LOG_DIR}/x11vnc.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-vnc.pid
     "
 
-    # Start websockify (VNC → WebSocket for noVNC)
-    nsenter -t "${POD_PID}" -m -- bash -c "
-      nohup websockify --web /usr/share/novnc 6080 localhost:5900 \
-        > /var/log/websockify.log 2>&1 &
-      echo \$! > /var/run/websockify.pid
-    " || true  # non-fatal if noVNC not present; VNC still accessible on 5900
+    # websockify
+    nsenter -t "$POD_PID" -m -- bash -c "
+      nohup websockify ${WS_PORT} localhost:${VNC_PORT} > ${LOG_DIR}/websockify.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-ws.pid
+    " || true
 
-    # Start UduChat (Open WebUI)
-    nsenter -t "${POD_PID}" -m -- bash -c "
+    # UduChat (Open WebUI)
+    UDUCHAT_PORT=$((3000 + POD_INDEX - 1))
+    nsenter -t "$POD_PID" -m -- bash -c "
       export WEBUI_NAME='UduChat'
-      export OLLAMA_BASE_URL='http://localhost:11434'
-      export DATA_DIR='/data/uduchat'
-      mkdir -p /data/uduchat
-      nohup /opt/llm-env/bin/open-webui serve --host 0.0.0.0 --port 3000 \
-        > /var/log/uduchat.log 2>&1 &
-      echo \$! > /var/run/uduchat.pid
+      export OLLAMA_BASE_URL='http://localhost:${OLLAMA_PORT}'
+      export DATA_DIR='${DATA_DIR}/uduchat'
+      mkdir -p '${DATA_DIR}/uduchat'
+      nohup ${VENV}/bin/open-webui serve --host 0.0.0.0 --port ${UDUCHAT_PORT} \
+        > ${LOG_DIR}/uduchat.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-uduchat.pid
     " || _fail "UduChat failed to start"
 
-    # Create desktop shortcut for UduChat
-    nsenter -t "${POD_PID}" -m -- bash -c "
+    # Desktop shortcut — use printf to expand UDUCHAT_PORT inside nsenter bash -c string
+    nsenter -t "$POD_PID" -m -- bash -c "
       mkdir -p /root/Desktop
-      cat > /root/Desktop/UduChat.desktop <<'DESKTOP'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=UduChat
-Comment=AGH AI Chat Interface
-Exec=chromium-browser --no-sandbox http://localhost:3000
-Icon=chromium-browser
-Terminal=false
-Categories=Network;
-DESKTOP
+      printf '[Desktop Entry]\nVersion=1.0\nType=Application\nName=UduChat\nComment=AGH AI Chat Interface\nExec=chromium-browser --no-sandbox http://localhost:${UDUCHAT_PORT}\nIcon=chromium-browser\nTerminal=false\nCategories=Network;\n' \
+        > /root/Desktop/UduChat.desktop
       chmod +x /root/Desktop/UduChat.desktop
     "
 
-    # Start cloudflared VD tunnel
-    nsenter -t "${POD_PID}" -m -- bash -c "
-      nohup cloudflared tunnel --no-autoupdate --url http://localhost:6080 \
-        > /var/log/cloudflared-vd.log 2>&1 &
-      echo \$! > /var/run/cloudflared-vd.pid
+    # cloudflared VD tunnel
+    nsenter -t "$POD_PID" -m -- bash -c "
+      nohup cloudflared tunnel --no-autoupdate --url http://localhost:${WS_PORT} \
+        > ${LOG_DIR}/cloudflared-vd.log 2>&1 &
+      echo \$! > /var/run/${POD_NAME}-cf-vd.pid
     "
 
     # Grep VD URL
     echo "Waiting for VD tunnel URL..."
     for i in $(seq 1 30); do
-      VD_URL=$(nsenter -t "${POD_PID}" -m -- bash -c "
-        grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /var/log/cloudflared-vd.log 2>/dev/null | head -1 || true
+      VD_URL=$(nsenter -t "$POD_PID" -m -- bash -c "
+        grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' ${LOG_DIR}/cloudflared-vd.log 2>/dev/null | head -1 || true
       ")
       [ -n "$VD_URL" ] && break
       sleep 2
@@ -284,43 +296,33 @@ DESKTOP
     echo "Bundle 3 desktop and UduChat setup complete."
   fi
 
-  # ---- 13. Determine bundle name for summary --------------------------------
-  case "${BUNDLE}" in
-    1) BUNDLE_NAME="API Only" ;;
-    2) BUNDLE_NAME="API + Admin" ;;
-    3) BUNDLE_NAME="Full Suite (API + Admin + Desktop)" ;;
-    *) BUNDLE_NAME="Bundle ${BUNDLE}" ;;
-  esac
-
-  # ---- 14. Print summary ----------------------------------------------------
+  # ---- Step 14: Summary + webhook -------------------------------------------
   echo ""
   echo "================================================"
-  echo " AGH LLM Suite — Deploy Complete"
-  echo " Bundle ${BUNDLE}: ${BUNDLE_NAME}"
+  echo " AGH LLM Suite — Pod ${POD_INDEX} Deployed"
+  echo " Bundle ${BUNDLE} | ${MODEL}"
   echo "================================================"
-  echo " API URL   : ${API_URL:-unknown}"
-  echo " API Key   : ${LLM_API_KEY}"
-  [ "${BUNDLE}" -ge 2 ] && echo " Admin Tok : ${ADMIN_TOKEN:-}"
-  [ "${BUNDLE}" -eq 3 ] && echo " VD URL    : ${VD_URL:-unknown} (password: ${VD_PASS:-changeme})"
-  [ "${BUNDLE}" -eq 3 ] && echo " UduChat   : Open VD -> Chrome -> UduChat icon"
-  echo " Model     : ${MODEL}"
+  echo " Pod      : ${POD_NAME}"
+  echo " API URL  : ${API_URL:-unknown}"
+  echo " API Key  : ${LLM_API_KEY}"
+  [ "${BUNDLE}" -ge 2 ] && echo " Admin    : ${ADMIN_TOKEN:-}"
+  [ "${BUNDLE}" -eq 3 ] && echo " VD URL   : ${VD_URL:-unknown}"
+  [ "${BUNDLE}" -eq 3 ] && echo " VD Pass  : ${VD_PASS:-changeme}"
+  echo " Ports    : Ollama=${OLLAMA_PORT} Gateway=${GATEWAY_PORT}"
   echo ""
-  echo " Sample:"
-  echo "   curl -s -X POST ${API_URL:-<API_URL>}/query \\"
-  echo "     -H \"Authorization: Bearer ${LLM_API_KEY}\" \\"
-  echo "     -H \"Content-Type: application/json\" \\"
-  echo "     -d '{\"prompt\":\"Hello!\"}' | python3 -m json.tool"
+  echo " curl -s -X POST ${API_URL:-<URL>}/query \\"
+  echo "   -H \"Authorization: Bearer ${LLM_API_KEY}\" \\"
+  echo "   -H \"Content-Type: application/json\" \\"
+  echo "   -d '{\"prompt\":\"Hello!\"}' | python3 -m json.tool"
   echo "================================================"
 
-  # ---- Post success webhook -------------------------------------------------
   if [ -n "${WEBHOOK_URL:-}" ]; then
-    WEBHOOK_BODY="{\"status\":\"success\",\"bundle\":${BUNDLE},\"api_url\":\"${API_URL:-}\",\"api_key\":\"${LLM_API_KEY}\",\"model\":\"${MODEL}\""
-    [ "${BUNDLE}" -ge 2 ] && WEBHOOK_BODY="${WEBHOOK_BODY},\"admin_token\":\"${ADMIN_TOKEN:-}\""
-    [ "${BUNDLE}" -eq 3 ] && WEBHOOK_BODY="${WEBHOOK_BODY},\"vd_url\":\"${VD_URL:-}\""
-    WEBHOOK_BODY="${WEBHOOK_BODY}}"
-    curl -sf -X POST "$WEBHOOK_URL" \
-      -H "Content-Type: application/json" \
-      -d "$WEBHOOK_BODY" \
+    BODY="{\"status\":\"success\",\"pod\":${POD_INDEX},\"bundle\":${BUNDLE}"
+    BODY="${BODY},\"api_url\":\"${API_URL:-}\",\"api_key\":\"${LLM_API_KEY}\",\"model\":\"${MODEL}\""
+    [ "${BUNDLE}" -ge 2 ] && BODY="${BODY},\"admin_token\":\"${ADMIN_TOKEN:-}\""
+    [ "${BUNDLE}" -eq 3 ] && BODY="${BODY},\"vd_url\":\"${VD_URL:-}\",\"vd_password\":\"${VD_PASS:-changeme}\""
+    BODY="${BODY}}"
+    curl -sf -X POST "$WEBHOOK_URL" -H "Content-Type: application/json" -d "$BODY" \
       || echo "WARNING: Webhook POST failed (non-fatal)"
   fi
 }

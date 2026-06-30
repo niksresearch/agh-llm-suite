@@ -8,18 +8,58 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/niksresearch/agh-llm-suite/main/startup.sh | bash
 #
 # Cloud-init (Shadeform / unattended boot):
-#   Paste this URL into Shadeform startup script field — it clones the repo
-#   and prints SSH instructions. User completes setup interactively.
+#   Runs at first boot with no TTY — installs prereqs + clones repo.
+#   SSH in after boot and run startup.sh again to provision a pod.
 
 INSTALL_DIR="/opt/agh-llm-suite"
 
 # ---------------------------------------------------------------------------
-# Fetch / update repo first (needed in both modes)
+# Phase 0: Prerequisites (runs in both modes — idempotent)
 # ---------------------------------------------------------------------------
-apt-get update -qq
-apt-get install -y --no-install-recommends git
+echo "[ AGH LLM Suite ] Checking prerequisites..."
 
+apt-get update -qq
+apt-get install -y --no-install-recommends git curl
+
+# NVIDIA driver check
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "NVIDIA driver not found — installing..."
+  OS_ID="$(. /etc/os-release && echo "$ID")"
+  case "$OS_ID" in
+    ubuntu)
+      apt-get install -y --no-install-recommends ubuntu-drivers-common
+      ubuntu-drivers autoinstall || apt-get install -y nvidia-driver-580-server nvidia-utils-580-server nvidia-modprobe
+      ;;
+    debian)
+      echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" \
+        > /etc/apt/sources.list.d/backports.list
+      apt-get update -qq
+      apt-get install -y -t bookworm-backports nvidia-driver firmware-misc-nonfree
+      ;;
+    *)
+      echo "WARNING: Unknown OS '$OS_ID' — skipping NVIDIA driver install. Install manually." >&2
+      ;;
+  esac
+else
+  echo "NVIDIA driver OK: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+fi
+
+# envPod check
+if ! command -v envpod >/dev/null 2>&1; then
+  echo "envPod not found — installing..."
+  curl -fsSL https://envpod.dev/install.sh | bash
+  ENVPOD_BIN=$(command -v envpod 2>/dev/null || echo "/usr/local/bin/envpod")
+  [[ -x "$ENVPOD_BIN" ]] || { echo "ERROR: envpod not found after install." >&2; exit 1; }
+  echo "envPod installed: $("$ENVPOD_BIN" --version 2>&1 | head -1)"
+else
+  echo "envPod OK: $(envpod --version 2>&1 | head -1)"
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 1: Fetch / update repo (idempotent)
+# ---------------------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
+  echo "Repo found — pulling latest..."
   git -C "$INSTALL_DIR" pull --ff-only
 else
   git clone https://github.com/niksresearch/agh-llm-suite.git "$INSTALL_DIR"
@@ -30,13 +70,13 @@ chmod +x "$INSTALL_DIR/startup.sh" \
          "$INSTALL_DIR/bootstrap.sh"
 
 # ---------------------------------------------------------------------------
-# Non-interactive (cloud-init / no TTY): print SSH instructions and exit
+# Non-interactive (cloud-init / no TTY): prereqs done, print SSH instructions
 # ---------------------------------------------------------------------------
 if [ ! -t 0 ]; then
   echo ""
   echo "======================================================="
-  echo " AGH LLM Suite ready at $INSTALL_DIR"
-  echo " SSH into this instance and run:"
+  echo " AGH LLM Suite prereqs installed. GPU instance ready."
+  echo " SSH in and run:"
   echo ""
   echo "   bash $INSTALL_DIR/startup.sh"
   echo "======================================================="
@@ -44,7 +84,7 @@ if [ ! -t 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Interactive (SSH): prompt for bundle and config
+# Interactive (SSH): prompt for bundle + pod slot
 # ---------------------------------------------------------------------------
 echo ""
 echo "=============================================="
@@ -75,6 +115,23 @@ case "$BUNDLE" in
   *) echo "Invalid choice. Must be 1, 2, or 3." >&2; exit 1 ;;
 esac
 
+# Show which pod slots are already running
+echo " Active pods:"
+if ps aux | grep -q "[s]leep infinity"; then
+  ps aux | grep "[s]leep infinity" | awk '{print "  PID " $2}' | head -10
+else
+  echo "  (none)"
+fi
+echo ""
+
+read -rp " Pod slot [1-10, default 1]: " POD_INDEX_INPUT
+POD_INDEX="${POD_INDEX_INPUT:-1}"
+
+if ! [[ "$POD_INDEX" =~ ^([1-9]|10)$ ]]; then
+  echo "Invalid pod slot. Must be 1-10." >&2; exit 1
+fi
+echo ""
+
 if [ "$BUNDLE" = "3" ]; then
   while true; do
     read -rsp " Virtual Desktop password: " VD_PASS; echo ""
@@ -85,12 +142,12 @@ if [ "$BUNDLE" = "3" ]; then
   export VD_PASS
 fi
 
-export BUNDLE
+export BUNDLE POD_INDEX
 
 echo ""
-echo " Bundle ${BUNDLE} selected. Starting deploy..."
+echo " Bundle ${BUNDLE} | Pod ${POD_INDEX} | Starting deploy..."
 echo "=============================================="
 echo ""
 
 cd "$INSTALL_DIR"
-exec bash llm-setup-bundle.sh --bundle "$BUNDLE"
+exec bash llm-setup-bundle.sh --bundle "$BUNDLE" --pod-index "$POD_INDEX"
